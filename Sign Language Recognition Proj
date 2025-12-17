@@ -1,0 +1,122 @@
+import cv2
+import mediapipe as mp
+import math
+
+# ================= SETUP =================
+mp_hands = mp.solutions.hands
+hands = mp_hands.Hands(
+    max_num_hands=1,
+    min_detection_confidence=0.7,
+    min_tracking_confidence=0.7
+)
+mp_draw = mp.solutions.drawing_utils
+
+cap = cv2.VideoCapture(0)
+
+# ================= UTILS =================
+def dist(a, b):
+    return math.hypot(a.x - b.x, a.y - b.y)
+
+def finger_state(lm, tip, pip, mcp):
+    """
+    Returns:
+    0 = folded
+    1 = straight
+    2 = curved
+    """
+    if dist(lm[tip], lm[mcp]) < dist(lm[pip], lm[mcp]):
+        return 0  # folded
+    elif lm[tip].y < lm[pip].y:
+        return 1  # straight
+    else:
+        return 2  # curved
+
+# Helper to calculate distance between two landmarks
+def tip_distance(lm, id1, id2):
+    return math.hypot(lm[id1].x - lm[id2].x, lm[id1].y - lm[id2].y)
+
+# ================= MAIN LOOP =================
+while cap.isOpened():
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    frame = cv2.flip(frame, 1)
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    result = hands.process(rgb)
+
+    gesture = ""
+
+    if result.multi_hand_landmarks:
+        hand = result.multi_hand_landmarks[0]
+        lm = hand.landmark
+
+        mp_draw.draw_landmarks(frame, hand, mp_hands.HAND_CONNECTIONS)
+
+        # Finger states
+        index  = finger_state(lm, 8, 6, 5)
+        middle = finger_state(lm, 12, 10, 9)
+        ring   = finger_state(lm, 16, 14, 13)
+        pinky  = finger_state(lm, 20, 18, 17)
+        thumb_out = lm[4].x > lm[3].x  # thumb outside
+
+        # ================= GESTURE PRIORITY =================
+
+        # ✋ HELLO → all fingers straight
+        if index == middle == ring == pinky == 1 and thumb_out:
+            gesture = "Hello"
+
+        # 🤘 ROCK AND ROLL → index + pinky straight
+        elif index == 1 and pinky == 1 and middle == ring == 0:
+            gesture = "Rock and Roll"
+
+        # ================= ALPHABETS =================
+        # B → all straight, thumb folded
+        elif index == middle == ring == pinky == 1 and not thumb_out:
+            gesture = "B"
+        # C → all curved
+        elif index == middle == ring == pinky == 2:
+            gesture = "C"
+        # A → all folded, thumb outside
+        elif index == middle == ring == pinky == 0 and thumb_out:
+            gesture = "A"
+        # D → index straight, others folded
+        elif index == 1 and middle == ring == pinky == 0:
+            gesture = "D"
+        # E → all folded, thumb inside
+        elif index == middle == ring == pinky == 0 and not thumb_out:
+            gesture = "E"
+
+        # ================= NEW GESTURES =================
+
+        # ✌️ VICTORY → index + middle straight, others folded
+        elif index == 1 and middle == 1 and ring == pinky == 0:
+            gesture = "Victory"
+
+        # 🤞 CROSS FINGERS → index straight, middle folded, others folded
+        elif index == 1 and middle == 0 and ring == pinky == 0:
+            gesture = "Cross Fingers"
+
+        # 👍 THUMBS UP → all folded except thumb out
+        elif index == middle == ring == pinky == 0 and thumb_out:
+            gesture = "Thumbs Up"
+
+        # 👌 OK → index tip close to thumb tip, others straight
+        elif tip_distance(lm, 8, 4) < 0.05 and middle == ring == pinky == 1:
+            gesture = "OK"
+
+        # ✋ HIGH FIVE → all fingers straight, thumb out
+        elif index == middle == ring == pinky == 1 and thumb_out:
+            gesture = "High Five"
+
+    # ================= DISPLAY =================
+    if gesture:
+        cv2.putText(frame, f"Gesture: {gesture}", (30, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 0), 3)
+
+    cv2.imshow("Hand Gesture Recognition", frame)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
